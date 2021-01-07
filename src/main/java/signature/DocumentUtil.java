@@ -1,9 +1,9 @@
 package signature;
 
 import org.w3c.dom.Document;
+import org.xml.sax.SAXException;
 
-import java.io.StringWriter;
-import java.io.Writer;
+import java.io.*;
 
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
@@ -40,6 +40,30 @@ public class DocumentUtil {
         DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
         DocumentBuilder builder = dbf.newDocumentBuilder();
         return builder.newDocument();
+    }
+
+    /**
+     * Method used to get the XML document by parsing
+     *
+     * @param xmlFilePath , file path of the XML document
+     * @return Document
+     */
+    public static Document getXmlDocument(String xmlFilePath) {
+        Document doc = null;
+        DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
+        dbf.setNamespaceAware(true);
+        try {
+            doc = dbf.newDocumentBuilder().parse(new FileInputStream(xmlFilePath));
+        } catch (ParserConfigurationException ex) {
+            ex.printStackTrace();
+        } catch (FileNotFoundException ex) {
+            ex.printStackTrace();
+        } catch (SAXException ex) {
+            ex.printStackTrace();
+        } catch (IOException ex) {
+            ex.printStackTrace();
+        }
+        return doc;
     }
 
 }

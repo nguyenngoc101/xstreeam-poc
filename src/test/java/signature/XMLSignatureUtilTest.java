@@ -3,6 +3,9 @@ package signature;
 
 import org.junit.Test;
 import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
 
 import javax.xml.crypto.MarshalException;
 import javax.xml.crypto.dsig.CanonicalizationMethod;
@@ -64,8 +67,24 @@ public class XMLSignatureUtilTest {
         FileInputStream is = new FileInputStream ("/Users/ngocnv/workspace/xstream-poc/instapay.cert");
         X509Certificate x509Certificate = (X509Certificate) fact.generateCertificate(is);
 
+        // sign doc
         Document signedDoc = XMLSignatureUtil.sign(doc, keyName, keyPair, digestMethod, signatureMethod, referenceURI, x509Certificate, canonicalizationMethodType);
         System.out.println("Signed Document"+DocumentUtil.asString(signedDoc));
+
+        // validate signature = true
+        System.out.println("Validate: " +XMLSignatureUtil.validate(signedDoc, publicKey));
+
+        // validate signature = false
+        Node root=doc.getFirstChild();
+        Element newserver=doc.createElement("new_node");
+        root.appendChild(newserver);
+        System.out.println("Validate: " +XMLSignatureUtil.validate(signedDoc, publicKey));
+
+
     }
 
+
+    @Test
+    public void validateSignedXmml() {
+    }
 }

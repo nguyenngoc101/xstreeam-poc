@@ -58,7 +58,8 @@ public class XMLSignatureUtilTest {
         String referenceURI = "";
         String canonicalizationMethodType = CanonicalizationMethod.INCLUSIVE;
 
-
+        //keytool -genkey -keyalg RSA -alias selfsigned -keystore keystore.jks -storepass password -validity 360 -keysize 2048
+        //keytool -exportcert -alias selfsigned -keystore keystore.jks -file instapay.cert
         CertificateFactory fact = CertificateFactory.getInstance("X.509");
         FileInputStream is = new FileInputStream ("/Users/ngocnv/workspace/xstream-poc/instapay.cert");
         X509Certificate x509Certificate = (X509Certificate) fact.generateCertificate(is);

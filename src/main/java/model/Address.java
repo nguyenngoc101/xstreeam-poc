@@ -1,11 +1,15 @@
-import com.alibaba.fastjson.annotation.JSONField;
-import com.alibaba.fastjson.annotation.JSONType;
+package model;
+
 import com.thoughtworks.xstream.annotations.XStreamAlias;
 import com.thoughtworks.xstream.annotations.XStreamAsAttribute;
 import com.thoughtworks.xstream.annotations.XStreamConverter;
 import com.thoughtworks.xstream.converters.extended.ToAttributedValueConverter;
 
-@XStreamConverter(value= ToAttributedValueConverter.class, strings={"street"})
+/**
+ * Represents a physical address with street and city.
+ * Uses XStream annotations for XML serialization.
+ */
+@XStreamConverter(value = ToAttributedValueConverter.class, strings = {"street"})
 public class Address {
 
     private String street;
@@ -15,7 +19,6 @@ public class Address {
     private String city;
 
     public Address() {
-
     }
 
     public Address(String street, String city) {
@@ -43,6 +46,4 @@ public class Address {
     public String toString() {
         return street + ", " + city;
     }
-
-
 }

@@ -1,12 +1,11 @@
 package signature;
 
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.IOException;
-import java.io.OutputStream;
-import java.security.Key;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.security.KeyFactory;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
@@ -18,151 +17,90 @@ import java.security.spec.PKCS8EncodedKeySpec;
 import java.security.spec.X509EncodedKeySpec;
 
 /**
- * This class is used as a cryptographic utility.
- *
- * @author <a href="mailto:debadatta.mishra@gmail.com">Debadatta Mishra</a>
- * @since 2013
+ * Utility class for cryptographic key operations.
+ * Provides methods for generating, storing, and retrieving RSA key pairs.
  */
 public class KryptoUtil {
 
-    /**
-     * Name of the algorithm
-     */
+    private static final Logger logger = LoggerFactory.getLogger(KryptoUtil.class);
+
     private static final String ALGORITHM = "RSA";
+    private static final int KEY_SIZE = 2048;
 
     /**
-     * This method is used to generate key pair based upon the provided
-     * algorithm
+     * Generates a new RSA key pair.
      *
-     * @return KeyPair
+     * @return the generated KeyPair
+     * @throws NoSuchAlgorithmException if RSA algorithm is not available
      */
-    private KeyPair generateKeyPairs() {
-        KeyPair keyPair = null;
-        KeyPairGenerator keyGen;
-        try {
-            keyGen = KeyPairGenerator.getInstance(ALGORITHM);
-            keyGen.initialize(1024);
-            keyPair = keyGen.genKeyPair();
-        } catch (NoSuchAlgorithmException e) {
-            e.printStackTrace();
-        }
-        return keyPair;
+    public KeyPair generateKeyPairs() throws NoSuchAlgorithmException {
+        logger.debug("Generating {} key pair with {} bit key size", ALGORITHM, KEY_SIZE);
+        KeyPairGenerator keyGen = KeyPairGenerator.getInstance(ALGORITHM);
+        keyGen.initialize(KEY_SIZE);
+        return keyGen.generateKeyPair();
     }
 
     /**
-     * Method used to store Private and Public Keys inside a directory
+     * Generates and stores a key pair to the specified directory.
      *
-     * @param dirPath to store the keys
+     * @param dirPath directory path to store the keys
+     * @throws NoSuchAlgorithmException if RSA algorithm is not available
+     * @throws IOException if key files cannot be written
      */
-    public void storeKeyPairs(String dirPath) {
+    public void storeKeyPairs(String dirPath) throws NoSuchAlgorithmException, IOException {
         KeyPair keyPair = generateKeyPairs();
-        PrivateKey privateKey = keyPair.getPrivate();
-        PublicKey publicKey = keyPair.getPublic();
-        storeKeys(dirPath + File.separator + "publickey.key", publicKey);
-        storeKeys(dirPath + File.separator + "privatekey.key", privateKey);
+        Path publicKeyPath = Path.of(dirPath, "publickey.key");
+        Path privateKeyPath = Path.of(dirPath, "privatekey.key");
+
+        storeKey(publicKeyPath, keyPair.getPublic());
+        storeKey(privateKeyPath, keyPair.getPrivate());
+
+        logger.info("Key pair stored successfully in {}", dirPath);
     }
 
     /**
-     * Method used to store the key(Public/Private)
+     * Stores a key to a file.
      *
-     * @param filePath , name of the file
-     * @param key
+     * @param filePath path to the key file
+     * @param key the key to store (public or private)
+     * @throws IOException if the file cannot be written
      */
-    private void storeKeys(String filePath, Key key) {
-        byte[] keyBytes = key.getEncoded();
-        OutputStream outStream = null;
-        try {
-            outStream = new FileOutputStream(filePath);
-            outStream.write(keyBytes);
-        } catch (Exception e) {
-            e.printStackTrace();
-        } finally {
-            if (outStream != null) {
-                try {
-                    outStream.close();
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
-            }
-        }
+    public void storeKey(Path filePath, java.security.Key key) throws IOException {
+        Files.write(filePath, key.getEncoded());
+        logger.debug("Key stored to {}", filePath);
     }
 
     /**
-     * Method used to retrieve the keys in the form byte array
+     * Retrieves a stored private key from file.
      *
-     * @param filePath of the key
-     * @return byte array
+     * @param filePath path to the private key file
+     * @return the PrivateKey
+     * @throws IOException if the file cannot be read
+     * @throws NoSuchAlgorithmException if RSA algorithm is not available
+     * @throws InvalidKeySpecException if the key specification is invalid
      */
-    private byte[] getKeyData(String filePath) {
-        File file = new File(filePath);
-        byte[] buffer = new byte[(int) file.length()];
-        FileInputStream fis = null;
-        try {
-            fis = new FileInputStream(file);
-            fis.read(buffer);
-        } catch (FileNotFoundException e) {
-            e.printStackTrace();
-        } catch (IOException e) {
-            e.printStackTrace();
-        } finally {
-            if (fis != null) {
-                try {
-                    fis.close();
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
-            }
-        }
-        return buffer;
+    public PrivateKey getStoredPrivateKey(String filePath) throws IOException, NoSuchAlgorithmException, InvalidKeySpecException {
+        byte[] keyData = Files.readAllBytes(Path.of(filePath));
+        PKCS8EncodedKeySpec keySpec = new PKCS8EncodedKeySpec(keyData);
+        KeyFactory keyFactory = KeyFactory.getInstance(ALGORITHM);
+        logger.debug("Private key loaded from {}", filePath);
+        return keyFactory.generatePrivate(keySpec);
     }
 
     /**
-     * Method used to get the generated Private Key
+     * Retrieves a stored public key from file.
      *
-     * @param filePath of the PrivateKey file
-     * @return PrivateKey
+     * @param filePath path to the public key file
+     * @return the PublicKey
+     * @throws IOException if the file cannot be read
+     * @throws NoSuchAlgorithmException if RSA algorithm is not available
+     * @throws InvalidKeySpecException if the key specification is invalid
      */
-    public PrivateKey getStoredPrivateKey(String filePath) {
-        PrivateKey privateKey = null;
-        byte[] keydata = getKeyData(filePath);
-        PKCS8EncodedKeySpec encodedPrivateKey = new PKCS8EncodedKeySpec(keydata);
-        KeyFactory keyFactory = null;
-        try {
-            keyFactory = KeyFactory.getInstance("RSA");
-        } catch (NoSuchAlgorithmException e) {
-            e.printStackTrace();
-        }
-        try {
-            privateKey = keyFactory.generatePrivate(encodedPrivateKey);
-        } catch (InvalidKeySpecException e) {
-            e.printStackTrace();
-        }
-        return privateKey;
-    }
-
-    /**
-     * Method used to get the generated Public Key
-     *
-     * @param filePath of the PublicKey file
-     * @return PublicKey
-     */
-    public PublicKey getStoredPublicKey(String filePath) {
-        PublicKey publicKey = null;
-        byte[] keydata = getKeyData(filePath);
-        KeyFactory keyFactory = null;
-        try {
-            keyFactory = KeyFactory.getInstance("RSA");
-        } catch (NoSuchAlgorithmException e) {
-            e.printStackTrace();
-        }
-        X509EncodedKeySpec encodedPublicKey = new X509EncodedKeySpec(keydata);
-        try {
-            publicKey = keyFactory.generatePublic(encodedPublicKey);
-        } catch (NullPointerException npe) {
-            npe.printStackTrace();
-        } catch (InvalidKeySpecException e) {
-            e.printStackTrace();
-        }
-        return publicKey;
+    public PublicKey getStoredPublicKey(String filePath) throws IOException, NoSuchAlgorithmException, InvalidKeySpecException {
+        byte[] keyData = Files.readAllBytes(Path.of(filePath));
+        X509EncodedKeySpec keySpec = new X509EncodedKeySpec(keyData);
+        KeyFactory keyFactory = KeyFactory.getInstance(ALGORITHM);
+        logger.debug("Public key loaded from {}", filePath);
+        return keyFactory.generatePublic(keySpec);
     }
 }

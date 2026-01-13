@@ -1,12 +1,21 @@
+package model;
+
 import com.thoughtworks.xstream.annotations.XStreamAlias;
 import com.thoughtworks.xstream.annotations.XStreamAsAttribute;
 
+import java.util.Arrays;
+
+/**
+ * Represents a company entity with basic information.
+ * Uses XStream annotations for XML serialization.
+ */
 @XStreamAlias("company")
 public class Company {
 
     @XStreamAlias("id")
     @XStreamAsAttribute
     private int id;
+
     private String name;
     private String[] websites;
     private Address address;
@@ -46,19 +55,16 @@ public class Company {
     @Override
     public String toString() {
         StringBuilder sb = new StringBuilder();
-
-        sb.append("\n id:" + this.id);
-        sb.append("\n name:" + this.name);
-        if (this.websites != null) {
-            sb.append("\n website: ");
-            for (String website : this.websites) {
-                sb.append(website + ", ");
-            }
+        sb.append("Company{");
+        sb.append("id=").append(id);
+        sb.append(", name='").append(name).append('\'');
+        if (websites != null) {
+            sb.append(", websites=").append(Arrays.toString(websites));
         }
-        if (this.address != null) {
-            sb.append("\n address:" + this.address.toString());
+        if (address != null) {
+            sb.append(", address=").append(address);
         }
+        sb.append('}');
         return sb.toString();
-
     }
 }

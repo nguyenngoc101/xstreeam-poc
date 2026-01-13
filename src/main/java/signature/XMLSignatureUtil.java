@@ -1,5 +1,7 @@
 package signature;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.w3c.dom.Attr;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
@@ -7,8 +9,12 @@ import org.w3c.dom.NamedNodeMap;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 
-import javax.xml.crypto.XMLStructure;
+import javax.xml.crypto.AlgorithmMethod;
+import javax.xml.crypto.KeySelector;
+import javax.xml.crypto.KeySelectorResult;
 import javax.xml.crypto.MarshalException;
+import javax.xml.crypto.XMLCryptoContext;
+import javax.xml.crypto.XMLStructure;
 import javax.xml.crypto.dsig.CanonicalizationMethod;
 import javax.xml.crypto.dsig.DigestMethod;
 import javax.xml.crypto.dsig.Reference;
@@ -25,7 +31,9 @@ import javax.xml.crypto.dsig.keyinfo.KeyInfoFactory;
 import javax.xml.crypto.dsig.spec.C14NMethodParameterSpec;
 import javax.xml.crypto.dsig.spec.TransformParameterSpec;
 import javax.xml.parsers.ParserConfigurationException;
+import javax.xml.transform.TransformerException;
 import java.io.ByteArrayInputStream;
+import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.security.Key;
 import java.security.KeyException;
@@ -33,30 +41,33 @@ import java.security.KeyPair;
 import java.security.NoSuchProviderException;
 import java.security.PrivateKey;
 import java.security.PublicKey;
+import java.security.cert.CertificateException;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedList;
 import java.util.List;
-import javax.xml.crypto.AlgorithmMethod;
-import javax.xml.crypto.KeySelector;
-import javax.xml.crypto.KeySelectorResult;
-import javax.xml.crypto.XMLCryptoContext;
-import javax.xml.transform.TransformerException;
 
+/**
+ * Utility class for XML Digital Signature operations.
+ * Provides methods for signing and validating XML documents using the XML-DSig standard.
+ */
 public class XMLSignatureUtil {
 
-    private static final Logger logger = new Logger();
-    private static final XMLSignatureFactory fac = getXMLSignatureFactory();
+    private static final Logger logger = LoggerFactory.getLogger(XMLSignatureUtil.class);
+    private static final XMLSignatureFactory signatureFactory = getXMLSignatureFactory();
 
-    /**
-     * By default, we include the keyinfo in the signature
-     */
     private static boolean includeKeyInfoInSignature = true;
 
-    private static class KeySelectorPresetKey extends KeySelector {
+    private XMLSignatureUtil() {
+        // Utility class - prevent instantiation
+    }
 
+    /**
+     * KeySelector that uses a preset key for signature validation.
+     */
+    private static class KeySelectorPresetKey extends KeySelector {
         private final Key key;
 
         public KeySelectorPresetKey(Key key) {
@@ -64,72 +75,67 @@ public class XMLSignatureUtil {
         }
 
         @Override
-        public KeySelectorResult select(KeyInfo keyInfo, KeySelector.Purpose purpose, AlgorithmMethod method, XMLCryptoContext context) {
-            return new KeySelectorResult() {
-                @Override public Key getKey() {
-                    return key;
-                }
-            };
+        public KeySelectorResult select(KeyInfo keyInfo, Purpose purpose, AlgorithmMethod method, XMLCryptoContext context) {
+            return () -> key;
         }
     }
 
     private static XMLSignatureFactory getXMLSignatureFactory() {
-        XMLSignatureFactory xsf = null;
-
         try {
-            xsf = XMLSignatureFactory.getInstance("DOM", "ApacheXMLDSig");
+            return XMLSignatureFactory.getInstance("DOM", "ApacheXMLDSig");
         } catch (NoSuchProviderException ex) {
+            logger.debug("ApacheXMLDSig provider not found, using default DOM provider");
             try {
-                xsf = XMLSignatureFactory.getInstance("DOM");
+                return XMLSignatureFactory.getInstance("DOM");
             } catch (Exception err) {
-                throw new RuntimeException(logger.couldNotCreateInstance("DOM", err));
+                throw new IllegalStateException("Could not create XMLSignatureFactory for DOM", err);
             }
         }
-        return xsf;
     }
 
     /**
-     * Sign a node in a document
+     * Signs a specific node in a document.
      *
-     * @param doc
-     * @param nodeToBeSigned
-     * @param keyPair
-     * @param digestMethod
-     * @param signatureMethod
-     * @param referenceURI
-     *
-     * @return
-     *
-     * @throws ParserConfigurationException
-     * @throws XMLSignatureException
-     * @throws MarshalException
-     * @throws GeneralSecurityException
+     * @param doc the document containing the node
+     * @param nodeToBeSigned the node to sign
+     * @param keyName optional key name for KeyInfo
+     * @param keyPair the key pair for signing
+     * @param digestMethod the digest method URI
+     * @param signatureMethod the signature method URI
+     * @param referenceURI the reference URI
+     * @param x509Certificate optional X509 certificate to include
+     * @param canonicalizationMethodType the canonicalization method
+     * @return the signed document
      */
-    public static Document sign(Document doc, Node nodeToBeSigned, String keyName, KeyPair keyPair, String digestMethod,
-                                String signatureMethod, String referenceURI, X509Certificate x509Certificate,
-                                String canonicalizationMethodType) throws ParserConfigurationException, GeneralSecurityException,
-            MarshalException, XMLSignatureException, TransformerException {
-        if (nodeToBeSigned == null)
-            throw logger.nullArgumentError("Node to be signed");
+    public static Document sign(Document doc, Node nodeToBeSigned, String keyName, KeyPair keyPair,
+                                String digestMethod, String signatureMethod, String referenceURI,
+                                X509Certificate x509Certificate, String canonicalizationMethodType)
+            throws ParserConfigurationException, GeneralSecurityException, MarshalException,
+            XMLSignatureException, TransformerException {
+
+        if (nodeToBeSigned == null) {
+            throw new IllegalArgumentException("Node to be signed cannot be null");
+        }
 
         if (logger.isTraceEnabled()) {
-            logger.trace("Document to be signed=" + DocumentUtil.asString(doc));
+            logger.trace("Document to be signed={}", DocumentUtil.asString(doc));
         }
 
         Node parentNode = nodeToBeSigned.getParentNode();
 
-        // Let us create a new Document
+        // Create a new Document for signing
         Document newDoc = DocumentUtil.createDocument();
-        // Import the node
         Node signingNode = newDoc.importNode(nodeToBeSigned, true);
         newDoc.appendChild(signingNode);
 
         if (!referenceURI.isEmpty()) {
             propagateIDAttributeSetup(nodeToBeSigned, newDoc.getDocumentElement());
         }
-        newDoc = sign(newDoc, keyName, keyPair, digestMethod, signatureMethod, referenceURI, x509Certificate, canonicalizationMethodType);
 
-        // Now let us import this signed doc into the original document we got in the method call
+        newDoc = sign(newDoc, keyName, keyPair, digestMethod, signatureMethod, referenceURI,
+                x509Certificate, canonicalizationMethodType);
+
+        // Import signed node back into original document
         Node signedNode = doc.importNode(newDoc.getFirstChild(), true);
 
         if (!referenceURI.isEmpty()) {
@@ -137,173 +143,180 @@ public class XMLSignatureUtil {
         }
 
         parentNode.replaceChild(signedNode, nodeToBeSigned);
-        // doc.getDocumentElement().replaceChild(signedNode, nodeToBeSigned);
 
         return doc;
     }
 
     /**
-     * Sign only specified element (assumption is that it already has ID attribute set)
+     * Signs a specific element with the signature placed before a sibling node.
      *
      * @param elementToSign element to sign with set ID
-     * @param nextSibling child of elementToSign, which will be used as next sibling of created signature
-     * @param keyPair
-     * @param digestMethod
-     * @param signatureMethod
-     * @param referenceURI
-     *
-     * @throws GeneralSecurityException
-     * @throws MarshalException
-     * @throws XMLSignatureException
+     * @param nextSibling child of elementToSign, used as next sibling of created signature
+     * @param keyName optional key name
+     * @param keyPair the key pair for signing
+     * @param digestMethod the digest method URI
+     * @param signatureMethod the signature method URI
+     * @param referenceURI the reference URI
+     * @param canonicalizationMethodType the canonicalization method
      */
-    public static void sign(Element elementToSign, Node nextSibling, String keyName, KeyPair keyPair, String digestMethod,
-                            String signatureMethod, String referenceURI, String canonicalizationMethodType)
+    public static void sign(Element elementToSign, Node nextSibling, String keyName, KeyPair keyPair,
+                            String digestMethod, String signatureMethod, String referenceURI,
+                            String canonicalizationMethodType)
             throws GeneralSecurityException, MarshalException, XMLSignatureException {
-        sign(elementToSign, nextSibling, keyName, keyPair, digestMethod, signatureMethod, referenceURI, null, canonicalizationMethodType);
+        sign(elementToSign, nextSibling, keyName, keyPair, digestMethod, signatureMethod,
+                referenceURI, null, canonicalizationMethodType);
     }
 
     /**
-     * Sign only specified element (assumption is that it already has ID attribute set)
+     * Signs a specific element with X509 certificate included.
      *
      * @param elementToSign element to sign with set ID
-     * @param nextSibling child of elementToSign, which will be used as next sibling of created signature
-     * @param keyPair
-     * @param digestMethod
-     * @param signatureMethod
-     * @param referenceURI
-     * @param x509Certificate {@link X509Certificate} to be placed in SignedInfo
-     *
-     * @throws GeneralSecurityException
-     * @throws MarshalException
-     * @throws XMLSignatureException
-     * @since 2.5.0
+     * @param nextSibling child of elementToSign, used as next sibling of created signature
+     * @param keyName optional key name
+     * @param keyPair the key pair for signing
+     * @param digestMethod the digest method URI
+     * @param signatureMethod the signature method URI
+     * @param referenceURI the reference URI
+     * @param x509Certificate X509 certificate to place in SignedInfo
+     * @param canonicalizationMethodType the canonicalization method
      */
-    public static void sign(Element elementToSign, Node nextSibling, String keyName, KeyPair keyPair, String digestMethod,
-                            String signatureMethod, String referenceURI, X509Certificate x509Certificate, String canonicalizationMethodType)
+    public static void sign(Element elementToSign, Node nextSibling, String keyName, KeyPair keyPair,
+                            String digestMethod, String signatureMethod, String referenceURI,
+                            X509Certificate x509Certificate, String canonicalizationMethodType)
             throws GeneralSecurityException, MarshalException, XMLSignatureException {
+
         PrivateKey signingKey = keyPair.getPrivate();
         PublicKey publicKey = keyPair.getPublic();
 
-        DOMSignContext dsc = new DOMSignContext(signingKey, elementToSign, nextSibling);
-
-        signImpl(dsc, digestMethod, signatureMethod, referenceURI, keyName, publicKey, x509Certificate, canonicalizationMethodType);
+        DOMSignContext signContext = new DOMSignContext(signingKey, elementToSign, nextSibling);
+        signImpl(signContext, digestMethod, signatureMethod, referenceURI, keyName, publicKey,
+                x509Certificate, canonicalizationMethodType);
     }
 
     /**
-     * Sign the root element
+     * Signs the root element of a document.
      *
-     * @param doc
-     * @param digestMethod
-     * @param signatureMethod
-     * @param referenceURI
-     *
-     * @return
-     *
-     * @throws GeneralSecurityException
-     * @throws XMLSignatureException
-     * @throws MarshalException
+     * @param doc the document to sign
+     * @param keyName optional key name
+     * @param keyPair the key pair for signing
+     * @param digestMethod the digest method URI
+     * @param signatureMethod the signature method URI
+     * @param referenceURI the reference URI
+     * @param canonicalizationMethodType the canonicalization method
+     * @return the signed document
      */
-    public static Document sign(Document doc, String keyName, KeyPair keyPair, String digestMethod, String signatureMethod, String referenceURI, String canonicalizationMethodType)
+    public static Document sign(Document doc, String keyName, KeyPair keyPair, String digestMethod,
+                                String signatureMethod, String referenceURI,
+                                String canonicalizationMethodType)
             throws GeneralSecurityException, MarshalException, XMLSignatureException, TransformerException {
-        return sign(doc, keyName, keyPair, digestMethod, signatureMethod, referenceURI, null, canonicalizationMethodType);
+        return sign(doc, keyName, keyPair, digestMethod, signatureMethod, referenceURI, null,
+                canonicalizationMethodType);
     }
 
     /**
-     * Sign the root element
+     * Signs the root element of a document with X509 certificate.
      *
-     * @param doc
-     * @param digestMethod
-     * @param signatureMethod
-     * @param referenceURI
-     *
-     * @return
-     *
-     * @throws GeneralSecurityException
-     * @throws XMLSignatureException
-     * @throws MarshalException
-     * @since 2.5.0
+     * @param doc the document to sign
+     * @param keyName optional key name
+     * @param keyPair the key pair for signing
+     * @param digestMethod the digest method URI
+     * @param signatureMethod the signature method URI
+     * @param referenceURI the reference URI
+     * @param x509Certificate X509 certificate to include
+     * @param canonicalizationMethodType the canonicalization method
+     * @return the signed document
      */
-    public static Document sign(Document doc, String keyName, KeyPair keyPair, String digestMethod, String signatureMethod, String referenceURI,
+    public static Document sign(Document doc, String keyName, KeyPair keyPair, String digestMethod,
+                                String signatureMethod, String referenceURI,
                                 X509Certificate x509Certificate, String canonicalizationMethodType)
             throws GeneralSecurityException, MarshalException, XMLSignatureException, TransformerException {
+
         if (logger.isTraceEnabled()) {
-            logger.trace("Document to be signed=" + DocumentUtil.asString(doc));
+            logger.trace("Document to be signed={}", DocumentUtil.asString(doc));
         }
+
         PrivateKey signingKey = keyPair.getPrivate();
         PublicKey publicKey = keyPair.getPublic();
 
-        DOMSignContext dsc = new DOMSignContext(signingKey, doc.getDocumentElement());
-
-        signImpl(dsc, digestMethod, signatureMethod, referenceURI, keyName, publicKey, x509Certificate, canonicalizationMethodType);
+        DOMSignContext signContext = new DOMSignContext(signingKey, doc.getDocumentElement());
+        signImpl(signContext, digestMethod, signatureMethod, referenceURI, keyName, publicKey,
+                x509Certificate, canonicalizationMethodType);
 
         return doc;
     }
 
     /**
-     * Validate a signed document with the given public key. All elements that contain a Signature are checked,
-     * this way both assertions and the containing document are verified when signed.
+     * Validates all signatures in a signed document.
      *
-     * @param signedDoc
-     * @param publicKey
-     *
-     * @return
-     *
-     * @throws MarshalException
-     * @throws XMLSignatureException
+     * @param signedDoc the signed document
+     * @param publicKey the public key for validation
+     * @return true if all signatures are valid
      */
-    @SuppressWarnings("unchecked")
-    public static boolean validate(Document signedDoc, final Key publicKey) throws MarshalException, XMLSignatureException {
-        if (signedDoc == null)
-            throw logger.nullArgumentError("Signed Document");
+    public static boolean validate(Document signedDoc, Key publicKey)
+            throws MarshalException, XMLSignatureException {
+
+        if (signedDoc == null) {
+            throw new IllegalArgumentException("Signed document cannot be null");
+        }
 
         propagateIDAttributeSetup(signedDoc.getDocumentElement(), signedDoc.getDocumentElement());
 
-        NodeList nl = signedDoc.getElementsByTagNameNS(XMLSignature.XMLNS, "Signature");
+        NodeList signatureNodes = signedDoc.getElementsByTagNameNS(XMLSignature.XMLNS, "Signature");
 
-        if (nl == null || nl.getLength() == 0) {
+        if (signatureNodes == null || signatureNodes.getLength() == 0) {
             logger.debug("Cannot find Signature element");
             return false;
         }
 
-        if (publicKey == null)
-            throw logger.nullValueError("Public Key");
+        if (publicKey == null) {
+            throw new IllegalArgumentException("Public key cannot be null");
+        }
 
-        for (int i = 0; i < nl.getLength(); i++) {
-            Node signatureNode = nl.item(i);
-
-            if (! validateSingleNode(signatureNode, publicKey)) return false;
+        for (int i = 0; i < signatureNodes.getLength(); i++) {
+            Node signatureNode = signatureNodes.item(i);
+            if (!validateSingleNode(signatureNode, publicKey)) {
+                return false;
+            }
         }
 
         return true;
     }
 
-    public static boolean validateSingleNode(Node signatureNode, final Key key) throws MarshalException, XMLSignatureException {
+    /**
+     * Validates a single signature node.
+     *
+     * @param signatureNode the signature node to validate
+     * @param key the key for validation
+     * @return true if signature is valid
+     */
+    public static boolean validateSingleNode(Node signatureNode, Key key)
+            throws MarshalException, XMLSignatureException {
         try {
             if (validateUsingKeySelector(signatureNode, new KeySelectorPresetKey(key))) {
                 return true;
             }
-        } catch (XMLSignatureException ex) { // pass through MarshalException
-            logger.debug("Verification failed: " + ex);
-            logger.trace(ex);
+        } catch (XMLSignatureException ex) {
+            logger.debug("Verification failed: {}", ex.getMessage());
+            logger.trace("Verification exception", ex);
         }
-
         return false;
     }
 
-    private static boolean validateUsingKeySelector(Node signatureNode, KeySelector validationKeySelector) throws XMLSignatureException, MarshalException {
-        DOMValidateContext valContext = new DOMValidateContext(validationKeySelector, signatureNode);
-        XMLSignature signature = fac.unmarshalXMLSignature(valContext);
-        boolean coreValidity = signature.validate(valContext);
+    private static boolean validateUsingKeySelector(Node signatureNode, KeySelector keySelector)
+            throws XMLSignatureException, MarshalException {
 
-        if (! coreValidity) {
-            if (logger.isTraceEnabled()) {
-                boolean sv = signature.getSignatureValue().validate(valContext);
-                logger.trace("Signature validation status: " + sv);
+        DOMValidateContext validateContext = new DOMValidateContext(keySelector, signatureNode);
+        XMLSignature signature = signatureFactory.unmarshalXMLSignature(validateContext);
+        boolean coreValidity = signature.validate(validateContext);
 
-                List<Reference> references = signature.getSignedInfo().getReferences();
-                for (Reference ref : references) {
-                    logger.trace("[Ref id=" + ref.getId() + ":uri=" + ref.getURI() + "]validity status:" + ref.validate(valContext));
-                }
+        if (!coreValidity && logger.isTraceEnabled()) {
+            boolean signatureValid = signature.getSignatureValue().validate(validateContext);
+            logger.trace("Signature validation status: {}", signatureValid);
+
+            List<Reference> references = signature.getSignedInfo().getReferences();
+            for (Reference ref : references) {
+                logger.trace("[Ref id={}:uri={}] validity status: {}",
+                        ref.getId(), ref.getURI(), ref.validate(validateContext));
             }
         }
 
@@ -311,70 +324,66 @@ public class XMLSignatureUtil {
     }
 
     /**
-     * Given the X509Certificate in the keyinfo element, get a {@link X509Certificate}
+     * Parses an X509 certificate from a KeyInfo certificate string.
      *
-     * @param certificateString
-     *
-     * @return
-     *
+     * @param certificateString the base64-encoded certificate string
+     * @return the parsed X509Certificate
+     * @throws CertificateException if certificate parsing fails
      */
-    public static X509Certificate getX509CertificateFromKeyInfoString(String certificateString) {
-        X509Certificate cert = null;
-        StringBuilder builder = new StringBuilder();
-        builder.append("-----BEGIN CERTIFICATE-----\n").append(certificateString).append("\n-----END CERTIFICATE-----");
+    public static X509Certificate getX509CertificateFromKeyInfoString(String certificateString)
+            throws CertificateException {
 
-        String derFormattedString = builder.toString();
+        String pemCertificate = "-----BEGIN CERTIFICATE-----\n" +
+                certificateString +
+                "\n-----END CERTIFICATE-----";
 
-        try {
-            CertificateFactory cf = CertificateFactory.getInstance("X.509");
-            ByteArrayInputStream bais = new ByteArrayInputStream(derFormattedString.getBytes());
+        CertificateFactory certFactory = CertificateFactory.getInstance("X.509");
+        ByteArrayInputStream inputStream = new ByteArrayInputStream(
+                pemCertificate.getBytes(StandardCharsets.UTF_8));
 
-            while (bais.available() > 0) {
-                cert = (X509Certificate) cf.generateCertificate(bais);
-            }
-        } catch (java.security.cert.CertificateException e) {
-            throw logger.processingError(e);
-        }
-        return cert;
+        return (X509Certificate) certFactory.generateCertificate(inputStream);
     }
 
-    private static void signImpl(DOMSignContext dsc, String digestMethod, String signatureMethod, String referenceURI, String keyName, PublicKey publicKey,
-                                 X509Certificate x509Certificate, String canonicalizationMethodType)
+    private static void signImpl(DOMSignContext signContext, String digestMethod,
+                                 String signatureMethod, String referenceURI, String keyName,
+                                 PublicKey publicKey, X509Certificate x509Certificate,
+                                 String canonicalizationMethodType)
             throws GeneralSecurityException, MarshalException, XMLSignatureException {
-        //dsc.setDefaultNamespacePrefix("dsig");
 
-        DigestMethod digestMethodObj = fac.newDigestMethod(digestMethod, null);
-        Transform transform1 = fac.newTransform(Transform.ENVELOPED, (TransformParameterSpec) null);
-        Transform transform2 = fac.newTransform("http://www.w3.org/2001/10/xml-exc-c14n#", (TransformParameterSpec) null);
+        DigestMethod digestMethodObj = signatureFactory.newDigestMethod(digestMethod, null);
 
-        List<Transform> transformList = new ArrayList();
-        transformList.add(transform1);
-        transformList.add(transform2);
+        List<Transform> transforms = new ArrayList<>();
+        transforms.add(signatureFactory.newTransform(Transform.ENVELOPED, (TransformParameterSpec) null));
+        transforms.add(signatureFactory.newTransform("http://www.w3.org/2001/10/xml-exc-c14n#",
+                (TransformParameterSpec) null));
 
-        Reference ref = fac.newReference(referenceURI, digestMethodObj, transformList, null, null);
+        Reference reference = signatureFactory.newReference(referenceURI, digestMethodObj,
+                transforms, null, null);
 
-        CanonicalizationMethod canonicalizationMethod = fac.newCanonicalizationMethod(canonicalizationMethodType,
-                (C14NMethodParameterSpec) null);
+        CanonicalizationMethod canonicalizationMethod = signatureFactory.newCanonicalizationMethod(
+                canonicalizationMethodType, (C14NMethodParameterSpec) null);
 
-        List<Reference> referenceList = Collections.singletonList(ref);
-        SignatureMethod signatureMethodObj = fac.newSignatureMethod(signatureMethod, null);
-        SignedInfo si = fac.newSignedInfo(canonicalizationMethod, signatureMethodObj, referenceList);
+        List<Reference> references = Collections.singletonList(reference);
+        SignatureMethod signatureMethodObj = signatureFactory.newSignatureMethod(signatureMethod, null);
+        SignedInfo signedInfo = signatureFactory.newSignedInfo(canonicalizationMethod,
+                signatureMethodObj, references);
 
-        KeyInfo ki;
+        KeyInfo keyInfo;
         if (includeKeyInfoInSignature) {
-            ki = createKeyInfo(keyName, publicKey, x509Certificate);
+            keyInfo = createKeyInfo(keyName, publicKey, x509Certificate);
         } else {
-            ki = createKeyInfo(keyName, null, null);
+            keyInfo = createKeyInfo(keyName, null, null);
         }
-        XMLSignature signature = fac.newXMLSignature(si, ki);
 
-        signature.sign(dsc);
+        XMLSignature signature = signatureFactory.newXMLSignature(signedInfo, keyInfo);
+        signature.sign(signContext);
     }
 
-    private static KeyInfo createKeyInfo(String keyName, PublicKey publicKey, X509Certificate x509Certificate) throws KeyException {
-        KeyInfoFactory keyInfoFactory = fac.getKeyInfoFactory();
+    private static KeyInfo createKeyInfo(String keyName, PublicKey publicKey,
+                                         X509Certificate x509Certificate) throws KeyException {
 
-        List<XMLStructure> items = new LinkedList();
+        KeyInfoFactory keyInfoFactory = signatureFactory.getKeyInfoFactory();
+        List<XMLStructure> items = new LinkedList<>();
 
         if (keyName != null) {
             items.add(keyInfoFactory.newKeyName(keyName));
@@ -392,19 +401,32 @@ public class XMLSignatureUtil {
     }
 
     /**
-     * Setup the ID attribute into <code>destElement</code> depending on the <code>isId</code> flag of an attribute of
-     * <code>sourceNode</code>.
+     * Propagates ID attribute setup from source node to destination element.
      *
-     * @param sourceNode
+     * @param sourceNode the source node with ID attribute
+     * @param destElement the destination element
      */
     public static void propagateIDAttributeSetup(Node sourceNode, Element destElement) {
-        NamedNodeMap nnm = sourceNode.getAttributes();
-        for (int i = 0; i < nnm.getLength(); i++) {
-            Attr attr = (Attr) nnm.item(i);
+        NamedNodeMap attributes = sourceNode.getAttributes();
+        if (attributes == null) {
+            return;
+        }
+
+        for (int i = 0; i < attributes.getLength(); i++) {
+            Attr attr = (Attr) attributes.item(i);
             if (attr.isId()) {
                 destElement.setIdAttribute(attr.getName(), true);
                 break;
             }
         }
+    }
+
+    /**
+     * Sets whether to include KeyInfo in signatures.
+     *
+     * @param include true to include KeyInfo
+     */
+    public static void setIncludeKeyInfoInSignature(boolean include) {
+        includeKeyInfoInSignature = include;
     }
 }

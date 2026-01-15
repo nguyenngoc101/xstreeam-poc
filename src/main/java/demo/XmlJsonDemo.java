@@ -3,7 +3,7 @@ package demo;
 import com.alibaba.fastjson2.JSON;
 import com.thoughtworks.xstream.XStream;
 import com.thoughtworks.xstream.io.json.JettisonMappedXmlDriver;
-import com.thoughtworks.xstream.security.AnyTypePermission;
+import com.thoughtworks.xstream.security.NoTypePermission;
 import model.Address;
 import model.Company;
 import org.slf4j.Logger;
@@ -100,7 +100,9 @@ public class XmlJsonDemo {
     private void configureXStream(XStream xstream) {
         xstream.processAnnotations(Company.class);
         xstream.processAnnotations(Address.class);
-        // Security: Allow all types (for demo purposes only)
-        xstream.addPermission(AnyTypePermission.ANY);
+        // Security: Use explicit type whitelist to prevent RCE attacks
+        xstream.addPermission(NoTypePermission.NONE);
+        xstream.allowTypes(new Class<?>[] { Company.class, Address.class });
+        xstream.allowTypesByWildcard(new String[] { "java.lang.*", "java.util.*" });
     }
 }

@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory;
 import org.w3c.dom.Document;
 import org.xml.sax.SAXException;
 
+import javax.xml.XMLConstants;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
@@ -23,6 +24,7 @@ import java.nio.file.Path;
 /**
  * Utility class for XML Document operations.
  * Provides methods for creating, parsing, and converting XML documents.
+ * All methods are protected against XXE (XML External Entity) attacks.
  */
 public class DocumentUtil {
 
@@ -40,7 +42,12 @@ public class DocumentUtil {
      * @throws TransformerException if transformation fails
      */
     public static String asString(Document doc) throws TransformerException {
-        Transformer transformer = TransformerFactory.newInstance().newTransformer();
+        TransformerFactory factory = TransformerFactory.newInstance();
+        // Protect against XXE attacks
+        factory.setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "");
+        factory.setAttribute(XMLConstants.ACCESS_EXTERNAL_STYLESHEET, "");
+
+        Transformer transformer = factory.newTransformer();
         transformer.setOutputProperty(OutputKeys.ENCODING, "UTF-8");
         transformer.setOutputProperty(OutputKeys.INDENT, "yes");
         transformer.setOutputProperty("{http://xml.apache.org/xslt}indent-amount", "2");
@@ -57,7 +64,7 @@ public class DocumentUtil {
      * @throws ParserConfigurationException if document builder cannot be created
      */
     public static Document createDocument() throws ParserConfigurationException {
-        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        DocumentBuilderFactory factory = createSecureDocumentBuilderFactory();
         DocumentBuilder builder = factory.newDocumentBuilder();
         logger.debug("Created new XML document");
         return builder.newDocument();
@@ -102,9 +109,29 @@ public class DocumentUtil {
      * @throws IOException if stream cannot be read
      */
     public static Document parseXmlDocument(InputStream inputStream) throws ParserConfigurationException, SAXException, IOException {
-        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        DocumentBuilderFactory factory = createSecureDocumentBuilderFactory();
         factory.setNamespaceAware(true);
         DocumentBuilder builder = factory.newDocumentBuilder();
         return builder.parse(inputStream);
+    }
+
+    /**
+     * Creates a DocumentBuilderFactory with XXE protection enabled.
+     *
+     * @return a secure DocumentBuilderFactory
+     * @throws ParserConfigurationException if security features cannot be set
+     */
+    private static DocumentBuilderFactory createSecureDocumentBuilderFactory() throws ParserConfigurationException {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+
+        // Protect against XXE attacks (OWASP recommendations)
+        factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+        factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+        factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+        factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+        factory.setXIncludeAware(false);
+        factory.setExpandEntityReferences(false);
+
+        return factory;
     }
 }
